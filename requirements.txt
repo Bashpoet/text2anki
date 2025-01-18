@@ -1,0 +1,3 @@
+spacy>=3.0.0
+genanki
+openai
