@@ -1,6 +1,6 @@
 # text2anki
 
-**Intelligent Flashcard Generator:** This script intelligently extracts key linguistic elements from text and uses a Large Language Model (LLM) to create comprehensive Anki flashcards for efficient language learning.
+**text2anki:** This script intelligently extracts key linguistic elements from text and uses a Large Language Model (LLM) to create comprehensive Anki flashcards for efficient language learning.
 
 ---
 
