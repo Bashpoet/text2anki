@@ -1,73 +1,115 @@
 # text2anki
-Intelligent Flashcard Generator: This script intelligently extracts key linguistic elements from text and uses an LLM to create comprehensive Anki flashcards for efficient language learning.
 
+**Intelligent Flashcard Generator:** This script intelligently extracts key linguistic elements from text and uses a Large Language Model (LLM) to create comprehensive Anki flashcards for efficient language learning.
 
-# Anki Deck Generator for Language Learning
+---
 
-This project leverages Natural Language Processing (NLP) and Large Language Models (LLMs) to automatically generate Anki flashcards from text input, aiding in language acquisition. It's designed to streamline the process of creating personalized Anki decks, focusing on vocabulary, grammar, and usage examples extracted from user-provided texts.
+## Overview
+
+This project leverages Natural Language Processing (NLP) and Large Language Models (LLMs) to automatically generate Anki flashcards from text input, streamlining language acquisition. It focuses on vocabulary, grammar, and usage examples extracted from user-provided texts, supporting multiple languages and excluding known words for personalized learning.
+
+---
 
 ## Features
 
-*   **Text Processing:** Utilizes spaCy for tokenization, part-of-speech tagging, and dependency parsing to analyze input text and identify key linguistic elements.
-*   **LLM Integration:** Employs LLMs (such as OpenAI's models or Hugging Face's transformers) to generate explanations, definitions, and example sentences for selected words and phrases.
-*   **Anki Deck Creation:** Uses genanki to programmatically create Anki decks and notes, with customizable models for different card types (e.g., nouns, verbs).
-*   **Database Storage (Optional):** Optionally stores processed sentences, focus words, and LLM responses in an SQLite database for tracking and analysis.
-*   **Prompt Engineering:** Includes a flexible prompt generation system to tailor LLM queries for specific grammatical or contextual information.
+- **Multi-Language Support:** Dynamically loads spaCy models and adjusts prompts based on the target language (e.g., includes gender for nouns in languages like Spanish or French).
+- **Text Processing:** Uses spaCy for tokenization, part-of-speech tagging, and dependency parsing to identify key linguistic elements.
+- **LLM Integration:** Generates definitions, conjugations, and example sentences using LLMs (e.g., OpenAI models).
+- **Anki Deck Creation:** Creates customizable Anki decks with `genanki`, including tailored models for nouns and verbs.
+- **Exclude Known Words:** Optionally skips user-specified known words to focus on new vocabulary.
+- **Database Storage:** Saves metadata (e.g., sentence, word, definition) in an SQLite database for tracking.
+- **Prompt Engineering:** Crafts structured, language-specific prompts for consistent LLM responses.
+- **Parallel Processing:** Speeds up generation with parallel LLM API calls.
+
+---
 
 ## Requirements
 
-*   Python 3.7+
-*   spaCy (`pip install spacy`)
-*   genanki (`pip install genanki`)
-*   OpenAI Python library (if using OpenAI's API) (`pip install openai`) or Transformers (`pip install transformers`)
-*   spaCy language model (e.g., `python -m spacy download es_core_news_sm` for Spanish)
+- **Python 3.7+**
+- **spaCy**: `pip install spacy`
+- **genanki**: `pip install genanki`
+- **OpenAI**: `pip install openai`
+- **SQLite3**: Included in Python standard library
+- **spaCy Language Model**: Install for your target language (e.g., `python -m spacy download es_core_news_sm` for Spanish)
 
+---
 ## Installation
 
-1.  Clone this repository:
-    ```bash
-    git clone <repository_url>
-    cd <repository_directory>
-    ```
-2.  Install the required packages:
-    ```bash
-    pip install -r requirements.txt
-    ```
-3.  Download the necessary spaCy language model:
-    ```bash
-    python -m spacy download es_core_news_sm # Or your desired language model
-    ```
+1. **Clone the repository:**
+   ```bash
+   git clone <repository_url>
+   cd <repository_directory>
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   pip install spacy genanki openai
+   ```
+
+3. **Download a spaCy language model:**
+   ```bash
+   python -m spacy download es_core_news_sm  # Spanish
+   python -m spacy download en_core_web_sm  # English
+   ```
+
+4. **Set your OpenAI API key:**
+   ```bash
+   export OPENAI_API_KEY='your-api-key-here'
+   ```
 
 ## Usage
 
-1.  **Prepare your input text:** Place the text you want to process in a `.txt` file (e.g., `sample_text.txt`).
-2.  **Set up your LLM API key:** If using OpenAI, set the `OPENAI_API_KEY` environment variable.
-3.  **Run the script:**
-    ```bash
-    python main.py
-    ```
-    This will generate an Anki deck file (`.apkg`) in the project directory.
+### Prepare input text
+Save your text in a `.txt` file (e.g., `sample_text.txt`).
+
+### (Optional) List known words
+Create a `.txt` file with one word per line (e.g., `known_words.txt`) to exclude them.
+
+### Run the script
+```bash
+python main.py --lang <spacy_model> --input <input_file> --output <output_file> --known-words <known_words_file>
+```
+
+**Arguments:**
+- `--lang`: spaCy model (e.g., `es_core_news_sm`).
+- `--input`: Path to input text file.
+- `--output`: Output deck name (default: `Language_Learning.apkg`).
+- `--known-words`: Path to known words file (optional).
+
+### Examples
+
+**Spanish:**
+```bash
+python main.py --lang es_core_news_sm --input sample_text.txt --output Spanish_Deck.apkg --known-words known_words.txt
+```
+
+**English:**
+```bash
+python main.py --lang en_core_web_sm --input english_text.txt --output English_Deck.apkg
+```
+
+### Import into Anki
+Open the generated `.apkg` file in Anki.
 
 ## Configuration
 
-*   **`NLP_MODEL`:** Specify the spaCy language model to use (e.g., `"en_core_web_sm"` for English).
-*   **`DB_PATH`:** Set the path for the SQLite database (if used).
-*   **Anki Model and Deck IDs:** Modify the `MyBaseModel` class and `anki_deck` object in `main.py` to customize card formats and deck information.
+- **Language Adjustments:** Automatically includes fields like "Gender" for gendered languages (e.g., Spanish) and omits them for others (e.g., English).
+- **Known Words:** Use `--known-words` to skip familiar vocabulary.
+- **Anki Models:** Custom models for nouns and verbs with relevant fields.
 
 ## Potential Extensions
 
-*   **Constituency Parsing:** Integrate libraries like Stanza for more detailed syntactic analysis.
-*   **TTS and Image Generation:** Add text-to-speech and image generation capabilities to enhance cards.
-*   **Advanced Prompt Engineering:** Refine LLM prompts for more nuanced grammatical insights.
-*   **Frequency Lists and User Feedback:** Incorporate word frequency analysis and user feedback mechanisms.
-*   **Error Handling and Rate Limiting:** Implement robust error handling and API rate limiting.
+- Add support for more languages (e.g., Italian, Chinese).
+- Enhance prompts for advanced grammar insights.
+- Integrate text-to-speech or image generation.
+- Incorporate word frequency analysis or user feedback.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. (You should create a LICENSE file)
+Licensed under the MIT License. See the `LICENSE` file for details.
 
 ## Acknowledgements
 
-*   spaCy
-*   genanki
-*   OpenAI / Hugging Face
+- [spaCy](https://spacy.io/)
+- [genanki](https://github.com/kerrickstaley/genanki)
+- [OpenAI](https://openai.com/)
