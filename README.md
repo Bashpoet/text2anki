@@ -109,7 +109,7 @@ python main.py --lang en_core_web_sm --input english_text.txt --output English_D
 
 ## 📜 License
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+This project is licensed under the MIT License. 
 
 ---
 
