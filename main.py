@@ -37,26 +37,93 @@ class AnkiCardModels:
     def _create_models(self) -> Dict[str, genanki.Model]:
         """Create and return Anki card models."""
         class CustomModel(genanki.Model):
-            def __init__(self, model_id, name, fields, templates):
-                super().__init__(model_id=model_id, name=name, fields=fields, templates=templates)
+            def __init__(self, model_id, name, fields, templates, css=None):
+                super().__init__(model_id=model_id, name=name, fields=fields, templates=templates, css=css)
+        
+        # Shared CSS for both models
+        css = """
+        .card {
+            font-family: Arial, sans-serif;
+            font-size: 20px;
+            text-align: center;
+            color: black;
+            background-color: white;
+            padding: 20px;
+        }
+        .word {
+            font-weight: bold;
+            font-size: 24px;
+            color: #2c3e50;
+        }
+        .sentence {
+            font-style: italic;
+            color: #7f8c8d;
+            margin-top: 10px;
+        }
+        .definition {
+            margin-top: 15px;
+            color: #2980b9;
+        }
+        .example {
+            margin-top: 10px;
+            color: #27ae60;
+        }
+        .gender {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        .conjugation {
+            color: #8e44ad;
+        }
+        .domain {
+            font-size: 14px;
+            color: #95a5a6;
+            margin-top: 5px;
+        }
+        .frequency {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-top: 2px;
+        }
+        """
         
         # Noun Model
         noun_fields = [
             {"name": "Word"},
             {"name": "Sentence"},
             {"name": "Definition"},
-            {"name": "Example"}
+            {"name": "Example"},
+            {"name": "Domain"},
+            {"name": "Frequency"}
         ]
         if self.has_gender:
             noun_fields.insert(2, {"name": "Gender"})
         
+        noun_front = """
+        <div class="word">{{Word}}</div>
+        <div class="sentence">{{Sentence}}</div>
+        """
+        
+        noun_back = """
+        {{FrontSide}}
+        <hr id='answer'>
+        """
+        
+        if self.has_gender:
+            noun_back += """<div class="gender">{{Gender}}</div>"""
+        
+        noun_back += """
+        <div class="definition">{{Definition}}</div>
+        <div class="example">{{Example}}</div>
+        <div class="domain">{{Domain}}</div>
+        <div class="frequency">Frequency rank: {{Frequency}}</div>
+        """
+        
         noun_templates = [
             {
                 "name": "Noun Card",
-                "qfmt": "{{Word}}<br>{{Sentence}}",
-                "afmt": "{{FrontSide}}<hr id='answer'>" + 
-                        ("{{Gender}}<br>" if self.has_gender else "") + 
-                        "{{Definition}}<br>{{Example}}"
+                "qfmt": noun_front,
+                "afmt": noun_back
             }
         ]
         
@@ -66,15 +133,31 @@ class AnkiCardModels:
             {"name": "Sentence"},
             {"name": "Conjugation"},
             {"name": "Definition"},
-            {"name": "Example"}
+            {"name": "Example"},
+            {"name": "Domain"},
+            {"name": "Frequency"}
         ]
+        
+        verb_front = """
+        <div class="word">{{Word}}</div>
+        <div class="sentence">{{Sentence}}</div>
+        """
+        
+        verb_back = """
+        {{FrontSide}}
+        <hr id='answer'>
+        <div class="conjugation">{{Conjugation}}</div>
+        <div class="definition">{{Definition}}</div>
+        <div class="example">{{Example}}</div>
+        <div class="domain">{{Domain}}</div>
+        <div class="frequency">Frequency rank: {{Frequency}}</div>
+        """
         
         verb_templates = [
             {
                 "name": "Verb Card",
-                "qfmt": "{{Word}}<br>{{Sentence}}",
-                "afmt": "{{FrontSide}}<hr id='answer'>" + 
-                        "{{Conjugation}}<br>{{Definition}}<br>{{Example}}"
+                "qfmt": verb_front,
+                "afmt": verb_back
             }
         ]
         
@@ -83,13 +166,15 @@ class AnkiCardModels:
                 model_id=1607392311,
                 name="NounModel",
                 fields=noun_fields,
-                templates=noun_templates
+                templates=noun_templates,
+                css=css
             ),
             "Verb Card": CustomModel(
                 model_id=1607392312,
                 name="VerbModel",
                 fields=verb_fields,
-                templates=verb_templates
+                templates=verb_templates,
+                css=css
             )
         }
     
@@ -125,6 +210,8 @@ class DatabaseManager:
             example TEXT,
             gender TEXT,
             conjugation TEXT,
+            domain TEXT,
+            frequency INTEGER,
             processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(sentence, focus_word, card_type)
         );
@@ -145,13 +232,14 @@ class DatabaseManager:
         self.conn.commit()
     
     def store_card_data(self, sentence: str, focus_word: str, card_type: str, 
-                      prompt: str, response: str, extracted_data: Dict[str, Any]):
+                      prompt: str, response: str, extracted_data: Dict[str, Any],
+                      domain: str = "", frequency: int = 0):
         """Store processed card data in the database."""
         try:
             self.cursor.execute("""
             INSERT OR REPLACE INTO processed_sentences 
-            (sentence, focus_word, card_type, prompt, response, definition, example, gender, conjugation)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (sentence, focus_word, card_type, prompt, response, definition, example, gender, conjugation, domain, frequency)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 sentence, 
                 focus_word, 
@@ -161,7 +249,9 @@ class DatabaseManager:
                 extracted_data.get("definition", ""),
                 extracted_data.get("example", ""),
                 extracted_data.get("gender", ""),
-                extracted_data.get("conjugation", "")
+                extracted_data.get("conjugation", ""),
+                domain,
+                frequency
             ))
             self.conn.commit()
         except sqlite3.Error as e:
@@ -247,7 +337,7 @@ class LLMService:
         # Simple cache for responses to avoid duplicate calls
         self.response_cache = {}
     
-    def call_with_retry(self, prompt: str, max_retries: int = 3, base_delay: float = 1.0) -> Dict[str, Any]:
+    def call_with_retry(self, prompt: str, max_retries: int = 3, base_delay: float = 1.0) -> str:
         """Call the OpenAI API with exponential backoff retry."""
         cache_key = hash(prompt)
         if cache_key in self.response_cache:
@@ -321,10 +411,16 @@ class AnkiCardGenerator:
         
         # Set up language processing
         lang_code = options["lang"].split("_")[0]  # e.g., "es" from "es_core_news_sm"
+        self.lang_code = lang_code
         self.has_gender = self._language_has_gender(lang_code)
         
         try:
             self.nlp = spacy.load(options["lang"])
+            # Add custom processing for Spanish
+            if self.lang_code == "es":
+                self.add_custom_pos_rules()
+            # Add multi-word expression recognition
+            self.add_compound_recognition()
         except OSError:
             logger.error(f"spaCy model '{options['lang']}' not found. Please install it first.")
             raise
@@ -334,6 +430,10 @@ class AnkiCardGenerator:
         if not api_key:
             logger.error("OpenAI API key not found. Set the OPENAI_API_KEY environment variable.")
             raise ValueError("OpenAI API key not found")
+        
+        # Configure frequency filtering
+        self.frequency_threshold = options.get("frequency_threshold", 5000)  # Default: top 5000 words
+        self.frequency_lists = self._load_frequency_lists(options.get("frequency_list"))
         
         # Initialize components
         self.llm = LLMService(api_key)
@@ -348,6 +448,110 @@ class AnkiCardGenerator:
         
         # Load known words if provided
         self.known_words = self._load_known_words(options.get("known_words"))
+        
+        # Domain dictionaries
+        self.domains = {
+            "weather": {
+                "terms": {"clima", "temperatura", "lluvia", "viento", "tormenta", "precipitación", 
+                         "meteorológico", "humedad", "nublado", "soleado", "frío", "calor", 
+                         "pronóstico", "grados", "celsius", "fahrenheit", "presión", "atmosférica"},
+                "compounds": ["cambio climático", "frente frío", "alta presión", "masa de aire",
+                             "precipitación acumulada", "pronóstico del tiempo", "sistema meteorológico",
+                             "ola de calor", "cielo despejado", "lluvia torrencial"]
+            },
+            "travel": {
+                "terms": {"viaje", "hotel", "turismo", "reserva", "vuelo", "tren", "boleto", "billete",
+                         "pasaporte", "maleta", "equipaje", "vacaciones", "destino", "playa", "montaña"},
+                "compounds": ["agencia de viajes", "visa de turista", "vuelo directo", "primera clase",
+                             "media pensión", "todo incluido", "centro histórico"]
+            }
+            # Add more domains as needed
+        }
+    
+    def add_custom_pos_rules(self):
+        """Add custom POS tagging rules to handle specific Spanish cases."""
+        @spacy.Language.component("spanish_verb_corrections")
+        def spanish_verb_fixes(doc):
+            # Common Spanish weather verbs often mistaken
+            weather_verbs = {
+                "llueve": "VERB",
+                "nieva": "VERB",
+                "amanece": "VERB",
+                "anochece": "VERB",
+                "truena": "VERB",
+                "relampaguea": "VERB"
+            }
+            
+            # Spanish verb endings
+            verb_endings = [
+                "ar", "er", "ir",  # Infinitive
+                "o", "as", "a", "amos", "áis", "an",  # Present indicative -ar
+                "o", "es", "e", "emos", "éis", "en",  # Present indicative -er/-ir
+                "aba", "abas", "ábamos", "abais", "aban",  # Imperfect -ar
+                "ía", "ías", "íamos", "íais", "ían"  # Imperfect -er/-ir
+            ]
+            
+            for token in doc:
+                # Check specific weather verbs
+                if token.text.lower() in weather_verbs:
+                    token.pos_ = weather_verbs[token.text.lower()]
+                
+                # Check verb endings for potential verbs tagged as nouns
+                elif token.pos_ == "NOUN":
+                    for ending in verb_endings:
+                        if token.text.lower().endswith(ending) and len(token.text) > len(ending) + 1:
+                            # Basic check to avoid false positives
+                            if len(token.text) > 3:  # Avoid very short words
+                                token.pos_ = "VERB"
+                                break
+            
+            return doc
+        
+        # Add to pipeline
+        if "spanish_verb_corrections" not in self.nlp.pipe_names:
+            self.nlp.add_pipe("spanish_verb_corrections", before="parser")
+    
+    def add_compound_recognition(self):
+        """Add compound noun recognition to spaCy pipeline."""
+        @spacy.Language.component("compound_recognizer")
+        def recognize_compounds(doc):
+            # Start with common compounds for the language
+            compounds = []
+            
+            # Add language-specific common compounds
+            if self.lang_code == "es":  # Spanish
+                compounds = [
+                    "fin de semana", "sala de estar", "estación del año", 
+                    "punto de vista", "campo de batalla", "hora punta",
+                    "tarjeta de crédito", "máquina de escribir", "procesador de texto",
+                    "cepillo de dientes", "perro caliente", "oso polar"
+                ]
+            elif self.lang_code == "fr":  # French
+                compounds = [
+                    "pomme de terre", "chemin de fer", "carte de crédit",
+                    "salle de bain", "coup d'état", "arc-en-ciel"
+                ]
+            
+            # Add domain-specific compounds from all domains
+            for domain_name, domain_data in self.domains.items():
+                compounds.extend(domain_data.get("compounds", []))
+            
+            # Find compounds in the text
+            for compound in compounds:
+                compound_tokens = self.nlp(compound)
+                compound_length = len(compound_tokens)
+                
+                for i in range(len(doc) - compound_length + 1):
+                    if doc[i:i+compound_length].text.lower() == compound.lower():
+                        # Mark tokens as part of compound
+                        with doc.retokenize() as retokenizer:
+                            retokenizer.merge(doc[i:i+compound_length])
+            
+            return doc
+        
+        # Add to pipeline
+        if "compound_recognizer" not in self.nlp.pipe_names:
+            self.nlp.add_pipe("compound_recognizer", last=True)
     
     def _language_has_gender(self, lang_code: str) -> bool:
         """Determine if the language has grammatical gender."""
@@ -377,6 +581,40 @@ class AnkiCardGenerator:
                 logger.warning(f"Known words file '{known_words_file}' not found.")
         return known_words
     
+    def _load_frequency_lists(self, frequency_file: Optional[str]) -> Dict[str, int]:
+        """Load word frequency information."""
+        frequencies = {}
+        
+        # Default frequency lists by language
+        default_lists = {
+            "es": "spanish_frequency.txt",
+            "fr": "french_frequency.txt",
+            "en": "english_frequency.txt",
+            # Add more languages as needed
+        }
+        
+        # If no file provided, use default for the language
+        if not frequency_file and self.lang_code in default_lists:
+            frequency_file = os.path.join(os.path.dirname(__file__), "data", default_lists[self.lang_code])
+        
+        if frequency_file and os.path.exists(frequency_file):
+            try:
+                with open(frequency_file, 'r', encoding='utf-8') as f:
+                    # Expected format: word,rank per line
+                    for i, line in enumerate(f):
+                        parts = line.strip().split(',')
+                        if len(parts) >= 2:
+                            word, rank = parts[0], int(parts[1])
+                            frequencies[word.lower()] = rank
+                        else:
+                            # If just a list of words, assign rank by line number
+                            frequencies[line.strip().lower()] = i + 1
+                logger.info(f"Loaded {len(frequencies)} word frequencies")
+            except Exception as e:
+                logger.warning(f"Error loading frequency file: {e}")
+        
+        return frequencies
+    
     def read_text_file(self, file_path: str) -> str:
         """Read text from a file."""
         try:
@@ -391,64 +629,106 @@ class AnkiCardGenerator:
         doc = self.nlp(text)
         return [sent.text.strip() for sent in doc.sents]
     
-    def identify_focus_elements(self, doc: spacy.tokens.Doc) -> List[Dict[str, Any]]:
-        """Identify potential elements to focus on (nouns and verbs)."""
+    def detect_domain(self, text: str) -> str:
+        """Detect the domain of the text based on keyword presence."""
+        text_lower = text.lower()
+        
+        # Count terms from each domain
+        domain_scores = {}
+        for domain, domain_data in self.domains.items():
+            terms = domain_data.get("terms", set())
+            score = sum(1 for term in terms if term in text_lower)
+            if score > 0:
+                domain_scores[domain] = score
+        
+        # Return the domain with the highest score
+        if domain_scores:
+            max_domain = max(domain_scores.items(), key=lambda x: x[1])
+            if max_domain[1] >= 2:  # Require at least 2 terms to determine domain
+                return max_domain[0]
+        
+        return "general"  # Default domain
+    
+    def identify_focus_elements(self, doc: spacy.tokens.Doc, domain: str) -> List[Dict[str, Any]]:
+        """Identify potential elements to focus on with domain awareness and frequency filtering."""
         elements = []
+        domain_data = self.domains.get(domain, {})
+        domain_terms = domain_data.get("terms", set())
+        
         for token in doc:
-            if token.pos_ in ["NOUN", "PROPN"] and token.lemma_.lower() not in self.known_words:
+            # Skip common words, stop words, and known words
+            if token.is_stop or token.lemma_.lower() in self.known_words:
+                continue
+            
+            # Get frequency information
+            word_frequency = self.frequency_lists.get(token.lemma_.lower(), float('inf'))
+            is_common_enough = word_frequency <= self.frequency_threshold
+            
+            # Check if it's a domain-specific term
+            is_domain_term = token.lemma_.lower() in domain_terms
+            
+            # Determine if we should process this token
+            should_process = (is_common_enough or is_domain_term)
+            
+            if should_process and token.pos_ in ["NOUN", "PROPN"]:
                 elements.append({
                     "text": token.text,
                     "pos": token.pos_,
                     "lemma": token.lemma_,
-                    "card_type": "Noun Card"
+                    "card_type": "Noun Card",
+                    "domain": domain,
+                    "frequency": word_frequency,
+                    "is_domain_term": is_domain_term
                 })
-            elif token.pos_ == "VERB" and token.lemma_.lower() not in self.known_words:
+            elif should_process and token.pos_ == "VERB":
                 elements.append({
                     "text": token.text,
                     "pos": token.pos_,
                     "lemma": token.lemma_,
-                    "card_type": "Verb Card"
+                    "card_type": "Verb Card",
+                    "domain": domain,
+                    "frequency": word_frequency,
+                    "is_domain_term": is_domain_term
                 })
+        
+        # Sort by frequency to prioritize common words
+        elements.sort(key=lambda x: x.get("frequency", float('inf')))
+        
         return elements
     
     def generate_llm_prompt(self, element: Dict[str, Any], sentence: str) -> str:
-        """Create a structured prompt for the LLM."""
+        """Create a structured prompt for the LLM with domain awareness."""
         card_type = element["card_type"]
         focus_word = element["text"]
+        domain = element.get("domain", "general")
+        is_domain_term = element.get("is_domain_term", False)
         
+        # Create base prompt
+        prompt = f"I'm learning {self.lang_code} and need help with the {element['pos'].lower()} '{focus_word}' from this sentence: '{sentence}'."
+        
+        # Add domain context if it's a domain term
+        if domain != "general" and is_domain_term:
+            prompt += f" This is a term related to {domain}."
+        
+        # Structure based on card type
         if card_type == "Noun Card":
             if self.has_gender:
-                return (
-                    f"I'm learning a language and need help with the noun '{focus_word}' from this sentence: '{sentence}'. "
-                    f"Please provide me with the following information in JSON format:\n"
-                    f"{{\n"
-                    f"  \"gender\": \"[masculine/feminine/neuter]\",\n"
-                    f"  \"definition\": \"[simple definition in English]\",\n"
-                    f"  \"example\": \"[example sentence using this word in a different context]\"\n"
-                    f"}}"
-                )
+                prompt += f" Please provide the following information in JSON format:\n{{\n  \"gender\": \"[masculine/feminine/neuter]\",\n  \"definition\": \"[simple definition in English]\",\n  \"example\": \"[example sentence using this word in a different context]\"\n}}"
             else:
-                return (
-                    f"I'm learning a language and need help with the noun '{focus_word}' from this sentence: '{sentence}'. "
-                    f"Please provide me with the following information in JSON format:\n"
-                    f"{{\n"
-                    f"  \"definition\": \"[simple definition in English]\",\n"
-                    f"  \"example\": \"[example sentence using this word in a different context]\"\n"
-                    f"}}"
-                )
+                prompt += f" Please provide the following information in JSON format:\n{{\n  \"definition\": \"[simple definition in English]\",\n  \"example\": \"[example sentence using this word in a different context]\"\n}}"
         elif card_type == "Verb Card":
-            return (
-                f"I'm learning a language and need help with the verb '{focus_word}' from this sentence: '{sentence}'. "
-                f"Please provide me with the following information in JSON format:\n"
-                f"{{\n"
-                f"  \"conjugation\": \"[conjugation in present tense, first-person singular]\",\n"
-                f"  \"definition\": \"[simple definition in English]\",\n"
-                f"  \"example\": \"[example sentence using this word in a different context]\"\n"
-                f"}}"
-            )
+            prompt += f" Please provide the following information in JSON format:\n{{\n  \"conjugation\": \"[conjugation in present tense, first-person singular]\",\n  \"definition\": \"[simple definition in English]\",\n  \"example\": \"[example sentence using this word in a different context]\"\n}}"
+        
+        # Add instruction for proper response format
+        prompt += "\n\nPlease respond ONLY with the JSON object containing the requested information. Do not include any additional text before or after the JSON."
+        
+        # Emphasize completeness
+        prompt += "\n\nIMPORTANT: Please include ALL the requested fields in your response, even if you're not sure about some values."
+        
+        return prompt
     
     def extract_json_from_response(self, response: str) -> Dict[str, Any]:
-        """Extract JSON data from LLM response."""
+        """Extract JSON data from LLM response with robust fallback."""
         import json
         import re
         
@@ -459,54 +739,72 @@ class AnkiCardGenerator:
                 # Parse the JSON object
                 json_str = match.group(0)
                 data = json.loads(json_str)
+                
+                # Log if it's missing any expected fields
+                logger.debug(f"Extracted data: {data}")
+                
                 return data
             except json.JSONDecodeError:
                 logger.warning(f"Failed to parse JSON from response: {response}")
         
-        # Fallback extraction if JSON parsing fails
+        # More robust fallback extraction for non-JSON responses
         extracted = {}
         
-        # Extract fields based on patterns
-        if '"gender"' in response.lower() or 'gender:' in response.lower():
-            gender_match = re.search(r'"gender"\s*:\s*"([^"]+)"', response) or re.search(r'gender:\s*(\w+)', response, re.IGNORECASE)
-            if gender_match:
-                extracted["gender"] = gender_match.group(1).strip()
+        # Extract fields using more flexible pattern matching
+        patterns = {
+            "gender": [r'"gender":\s*"([^"]+)"', r'gender:\s*([^\n]+)', r'Gender:\s*([^\n]+)'],
+            "definition": [r'"definition":\s*"([^"]+)"', r'definition:\s*([^\n]+)', r'Definition:\s*([^\n]+)'],
+            "example": [r'"example":\s*"([^"]+)"', r'example:\s*([^\n]+)', r'Example:\s*([^\n]+)'],
+            "conjugation": [r'"conjugation":\s*"([^"]+)"', r'conjugation:\s*([^\n]+)', r'Conjugation:\s*([^\n]+)']
+        }
         
-        if '"definition"' in response.lower() or 'definition:' in response.lower():
-            def_match = re.search(r'"definition"\s*:\s*"([^"]+)"', response) or re.search(r'definition:\s*(.+?)(?:\n|$)', response, re.IGNORECASE)
-            if def_match:
-                extracted["definition"] = def_match.group(1).strip()
+        for field, field_patterns in patterns.items():
+            for pattern in field_patterns:
+                match = re.search(pattern, response, re.IGNORECASE | re.DOTALL)
+                if match:
+                    extracted[field] = match.group(1).strip()
+                    break
         
-        if '"example"' in response.lower() or 'example:' in response.lower():
-            example_match = re.search(r'"example"\s*:\s*"([^"]+)"', response) or re.search(r'example:\s*(.+?)(?:\n|$)', response, re.IGNORECASE)
-            if example_match:
-                extracted["example"] = example_match.group(1).strip()
+        # Ensure all fields have defaults
+        for field in ["definition", "example", "gender", "conjugation"]:
+            if field not in extracted:
+                extracted[field] = ""
         
-        if '"conjugation"' in response.lower() or 'conjugation:' in response.lower():
-            conj_match = re.search(r'"conjugation"\s*:\s*"([^"]+)"', response) or re.search(r'conjugation:\s*(.+?)(?:\n|$)', response, re.IGNORECASE)
-            if conj_match:
-                extracted["conjugation"] = conj_match.group(1).strip()
+        if not extracted.get("definition") and not extracted.get("example"):
+            logger.warning(f"Failed to extract meaningful data from response: {response}")
         
         return extracted
     
     def create_anki_note(self, extracted_data: Dict[str, Any], sentence: str, 
-                        focus_word: str, card_type: str) -> genanki.Note:
+                        focus_word: str, card_type: str, domain: str = "general",
+                        frequency: int = 0) -> genanki.Note:
         """Create an Anki note based on the card type and extracted data."""
         model = self.card_models.get_model(card_type)
         
         if card_type == "Noun Card":
             fields = [focus_word, sentence]
+            
             if self.has_gender:
                 fields.append(extracted_data.get("gender", ""))
-            fields.extend([extracted_data.get("definition", ""), extracted_data.get("example", "")])
+                
+            fields.extend([
+                extracted_data.get("definition", ""),
+                extracted_data.get("example", ""),
+                domain,
+                str(frequency) if frequency < float('inf') else "Unknown"
+            ])
+        
         elif card_type == "Verb Card":
             fields = [
                 focus_word, 
                 sentence, 
                 extracted_data.get("conjugation", ""), 
                 extracted_data.get("definition", ""), 
-                extracted_data.get("example", "")
+                extracted_data.get("example", ""),
+                domain,
+                str(frequency) if frequency < float('inf') else "Unknown"
             ]
+        
         else:
             logger.error(f"Unknown card type: {card_type}")
             raise ValueError(f"Unknown card type: {card_type}")
@@ -515,37 +813,60 @@ class AnkiCardGenerator:
     
     def process_sentence(self, sentence: str) -> List[genanki.Note]:
         """Process a single sentence and return generated notes."""
+        # Parse sentence
         doc = self.nlp(sentence)
-        focus_elements = self.identify_focus_elements(doc)
+        
+        # Detect domain
+        domain = self.detect_domain(sentence)
+        logger.debug(f"Detected domain for sentence: {domain}")
+        
+        # Find focus elements
+        focus_elements = self.identify_focus_elements(doc, domain)
         notes = []
         
         for element in focus_elements:
             focus_word = element["text"]
             card_type = element["card_type"]
+            element_domain = element.get("domain", "general")
+            frequency = element.get("frequency", float('inf'))
             
             # Skip if already processed
             if self.db.is_sentence_word_processed(sentence, focus_word, card_type):
                 logger.debug(f"Skipping already processed: {focus_word} in '{sentence}'")
                 continue
             
-            prompt = self.generate_llm_prompt(element, sentence)
-            
             try:
+                # Generate prompt
+                prompt = self.generate_llm_prompt(element, sentence)
+                
+                # Get LLM response with retry
                 response = self.llm.call_with_retry(prompt)
+                logger.debug(f"LLM response for '{focus_word}': {response}")
+                
+                # Extract data from response
                 extracted_data = self.extract_json_from_response(response)
                 
-                if not extracted_data:
-                    logger.warning(f"Failed to extract data for '{focus_word}' in sentence: '{sentence}'")
+                # Validate extracted data
+                if not extracted_data or (not extracted_data.get("definition") and not extracted_data.get("example")):
+                    logger.warning(f"No useful data extracted for '{focus_word}' in sentence: '{sentence}'")
                     continue
                 
-                note = self.create_anki_note(extracted_data, sentence, focus_word, card_type)
+                # Create note
+                note = self.create_anki_note(
+                    extracted_data, sentence, focus_word, card_type, 
+                    domain=element_domain, frequency=frequency
+                )
                 notes.append(note)
                 
                 # Store in database
-                self.db.store_card_data(sentence, focus_word, card_type, prompt, response, extracted_data)
+                self.db.store_card_data(
+                    sentence, focus_word, card_type, prompt, response, 
+                    extracted_data, domain=element_domain, frequency=frequency
+                )
                 
             except Exception as e:
                 logger.error(f"Error processing '{focus_word}' in '{sentence}': {e}")
+                # Continue with next element
         
         return notes
     
@@ -560,7 +881,14 @@ class AnkiCardGenerator:
         
         for i, sentence in enumerate(sentences):
             try:
+                # Skip very short sentences
+                if len(sentence.split()) < 3:
+                    logger.debug(f"Skipping short sentence: '{sentence}'")
+                    continue
+                
+                logger.info(f"Processing sentence {i+1}/{total_sentences}: '{sentence}'")
                 notes = self.process_sentence(sentence)
+                
                 for note in notes:
                     self.anki_deck.add_note(note)
                 
@@ -605,8 +933,12 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", required=True, help="Input text file")
     parser.add_argument("--output", default="Language_Learning.apkg", help="Output Anki deck file name")
     parser.add_argument("--known-words", help="File containing known words to exclude")
+    parser.add_argument("--frequency-list", help="File containing word frequencies")
+    parser.add_argument("--frequency-threshold", type=int, default=5000, 
+                       help="Only process words in the top N most frequent words (default: 5000)")
     parser.add_argument("--deck-name", default="Language Learning Deck", help="Name for the Anki deck")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--debug", "-d", action="store_true", help="Enable debug logging")
     parser.add_argument("--resume", action="store_true", help="Resume from last run if interrupted")
     return parser
 
@@ -628,8 +960,12 @@ def main() -> None:
     args = parser.parse_args()
     
     # Set log level
-    if args.verbose:
+    if args.debug:
         logger.setLevel(logging.DEBUG)
+    elif args.verbose:
+        logger.setLevel(logging.INFO)
+    else:
+        logger.setLevel(logging.WARNING)
     
     try:
         # Convert args to dict
@@ -650,6 +986,11 @@ def main() -> None:
         # Cleanup
         generator.cleanup()
         
+        print(f"\nSuccess! Anki deck created: {args.output}")
+        
+    except KeyboardInterrupt:
+        print("\nProcess interrupted by user. Run with --resume to continue later.")
+        return 1
     except Exception as e:
         logger.error(f"Error: {e}")
         return 1
